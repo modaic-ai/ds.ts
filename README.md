@@ -19,6 +19,20 @@ Supported DSPy Primitives:
 - [x] Tools - via [AI SDK Tools](https://ai-sdk.dev/docs/foundations/tools)
 - [ ] Streaming
 
+## Installation
+
+**NPM**
+
+```bash
+npm install @modaic/dsts
+```
+
+**Bun**
+
+```bash
+bun add @modaic/dsts
+```
+
 ## Quickstart
 
 ```typescript
