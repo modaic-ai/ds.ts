@@ -1,5 +1,6 @@
 {
-  "name": "ds.ts",
+  "name": "dsts",
+  "version": "0.0.1",
   "module": "index.ts",
   "type": "module",
   "devDependencies": {
@@ -12,5 +13,19 @@
     "@ai-sdk/openai": "^3.0.1",
     "ai": "^6.0.3",
     "zod": "^4.2.1"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --declaration --emitDeclarationOnly && bun build ./src/index.ts --outdir ./dist --target node"
   }
 }

@@ -1,12 +1,9 @@
 import { z } from "zod";
+import type { StreamTextResult, ToolSet, Output, GenerateTextResult } from "ai";
 import type { Signature } from "../signatures/signature";
 import { LM } from "../clients/lm";
-import {
-  getFieldDescriptionString,
-  getFields,
-  formatFieldValue,
-  parseValue,
-} from "./utils";
+import { split_message_content_for_custom_types } from "./types";
+import { AdapterParseError } from "../exceptions";
 
 /**
  * Base Adapter class.
@@ -26,20 +23,35 @@ export abstract class Adapter {
    *
    * @returns List of dictionaries representing parsed LM responses. Each dictionary contains keys matching the signature's output field names. For multiple generations (n > 1), returns multiple dictionaries.
    */
-  async run<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
+  async run<
+    I extends z.ZodObject<any>,
+    O extends z.ZodObject<any>,
+    T extends ToolSet
+  >(
     lm: LM,
     lm_kwargs: any,
-    signature: Signature<I, O>,
+    signature: Signature<I, O, T>,
     demos: any[],
     inputs: z.infer<I>
-  ): Promise<z.infer<O>> {
+  ): Promise<GenerateTextResult<T, Output.Output<z.infer<O>>>> {
+    // TODO: return vercel AI SDK native response type
     const messages = this.format(signature, demos, inputs);
-    const { text } = await lm.generateText({
+    const result = await lm.generateText({
       messages,
+      tools: signature.tools,
       ...lm_kwargs,
     });
 
-    return this.parse(signature, text);
+    // return native AI SDK response type with the output field replaced with adapter's structured output
+    const parsed = this.parse(signature, result.text);
+    return new Proxy(result, {
+      get(target, prop, receiver) {
+        if (prop === "output") {
+          return parsed;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as any;
   }
 
   /**
@@ -53,18 +65,57 @@ export abstract class Adapter {
    *
    * @returns List of dictionaries representing parsed LM responses. Each dictionary contains keys matching the signature's output field names. For multiple generations (n > 1), returns multiple dictionaries.
    */
-  async stream<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
+  async stream<
+    I extends z.ZodObject<any>,
+    O extends z.ZodObject<any>,
+    T extends ToolSet
+  >(
     lm: LM,
     lm_kwargs: any,
-    signature: Signature<I, O>,
+    signature: Signature<I, O, T>,
     demos: any[],
     inputs: z.infer<I>
-  ): Promise<any> {
+  ): Promise<StreamTextResult<T, Output.Output<z.infer<O>>>> {
     const messages = this.format(signature, demos, inputs);
-    return await lm.streamText({
+    const result = await lm.streamText({
       messages,
+      tools: signature.tools,
       ...lm_kwargs,
     });
+
+    const self = this;
+    const generator = (async function* () {
+      let accumulatedText = "";
+      for await (const delta of result.textStream) {
+        accumulatedText += delta;
+        yield self.parse(signature, accumulatedText, true);
+      }
+    })();
+
+    // Create a ReadableStream from the generator to be fully compatible with Vercel AI SDK's AsyncIterableStream
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        for await (const value of generator) {
+          controller.enqueue(value);
+        }
+        controller.close();
+      },
+    });
+
+    // Make it also an AsyncIterable so it satisfies the AsyncIterableStream type
+    const partialOutputStream = Object.assign(readableStream, {
+      [Symbol.asyncIterator]: () => generator[Symbol.asyncIterator](),
+    });
+
+    // return native AI SDK response type with the partialOutputStream field replaced with adapter's structured output stream
+    return new Proxy(result, {
+      get(target, prop, receiver) {
+        if (prop === "partialOutputStream") {
+          return partialOutputStream;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as any;
   }
 
   /**
@@ -108,6 +159,9 @@ export abstract class Adapter {
     demos: any[],
     inputs: z.infer<I>
   ): { role: "system" | "user" | "assistant"; content: string }[] {
+    // NOTE: aligned with dspy [x]
+    const context: Record<string, { type: z.ZodType; value: any }> = {}; // A mapping of keys to special types populated, used, and shared by helper functions.
+
     const inputsCopy = { ...inputs };
     const historyFieldName = this._get_history_field_name(signature);
     let conversationHistory: {
@@ -123,11 +177,12 @@ export abstract class Adapter {
       conversationHistory = this.format_conversation_history(
         signatureWithoutHistory,
         historyFieldName,
-        inputsCopy
+        inputsCopy,
+        context
       );
     }
 
-    const messages: {
+    let messages: {
       role: "system" | "user" | "assistant";
       content: string;
     }[] = [];
@@ -142,7 +197,7 @@ export abstract class Adapter {
 
     messages.push({ role: "system", content: systemMessage });
 
-    messages.push(...this.format_demos(signature, demos));
+    messages.push(...this.format_demos(signature, demos, context));
 
     if (historyFieldName) {
       const signatureWithoutHistory = signature.delete(
@@ -152,6 +207,7 @@ export abstract class Adapter {
       const content = this.format_user_message_content(
         signatureWithoutHistory,
         inputsCopy,
+        context,
         {
           main_request: true,
         }
@@ -159,12 +215,17 @@ export abstract class Adapter {
       messages.push(...conversationHistory);
       messages.push({ role: "user", content });
     } else {
-      const content = this.format_user_message_content(signature, inputsCopy, {
-        main_request: true,
-      });
+      const content = this.format_user_message_content(
+        signature,
+        inputsCopy,
+        context,
+        {
+          main_request: true,
+        }
+      );
       messages.push({ role: "user", content });
     }
-    messages = split_message_content_for_custom_types(messages);
+    messages = split_message_content_for_custom_types(messages, context);
 
     return messages;
   }
@@ -178,10 +239,13 @@ export abstract class Adapter {
    * @param signature - The DSPy signature for which to format the field description.
    * @returns A string that contains the field description for the input fields and the output fields.
    */
-  abstract format_field_description<
+  format_field_description<
     I extends z.ZodObject<any>,
     O extends z.ZodObject<any>
-  >(signature: Signature<I, O>): string;
+  >(signature: Signature<I, O>): string {
+    // NOTE: Must be implemented by the subclass
+    throw new Error("Not implemented");
+  }
 
   /**
    * Format the field structure for the system message.
@@ -193,10 +257,13 @@ export abstract class Adapter {
    * @param signature - The DSPy signature for which to format the field structure.
    * @returns A string that contains the field structure format.
    */
-  abstract format_field_structure<
+  format_field_structure<
     I extends z.ZodObject<any>,
     O extends z.ZodObject<any>
-  >(signature: Signature<I, O>): string;
+  >(signature: Signature<I, O>): string {
+    // NOTE: Must be implemented by the subclass
+    throw new Error("Not implemented");
+  }
 
   /**
    * Format the task description for the system message.
@@ -207,10 +274,13 @@ export abstract class Adapter {
    * @param signature - The DSPy signature of the DSpy module.
    * @returns A string that describes the task.
    */
-  abstract format_task_description<
+  format_task_description<
     I extends z.ZodObject<any>,
     O extends z.ZodObject<any>
-  >(signature: Signature<I, O>): string;
+  >(signature: Signature<I, O>): string {
+    // NOTE: Must be implemented by the subclass
+    throw new Error("Not implemented");
+  }
 
   /**
    * Format the user message content.
@@ -224,14 +294,18 @@ export abstract class Adapter {
    * @param options.suffix - A suffix to the user message content.
    * @returns A string that contains the user message content.
    */
-  abstract format_user_message_content<
+  format_user_message_content<
     I extends z.ZodObject<any>,
     O extends z.ZodObject<any>
   >(
     signature: Signature<I, O>,
     inputs: z.infer<I>,
+    context: Record<string, { type: z.ZodType; value: any }>,
     options?: { prefix?: string; suffix?: string; main_request?: boolean }
-  ): string;
+  ): string {
+    // NOTE: Must be implemented by the subclass
+    throw new Error("Not implemented");
+  }
 
   /**
    * Format the assistant message content.
@@ -244,14 +318,17 @@ export abstract class Adapter {
    * @param options - Options for formatting, including a message to be used when a field is missing.
    * @returns A string that contains the assistant message content.
    */
-  abstract format_assistant_message_content<
+  format_assistant_message_content<
     I extends z.ZodObject<any>,
     O extends z.ZodObject<any>
   >(
     signature: Signature<I, O>,
     outputs: z.infer<O>,
     options?: { missing_field_message?: string }
-  ): string;
+  ): string {
+    // NOTE: Must be implemented by the subclass
+    throw new Error("Not implemented");
+  }
 
   /**
    * Format the few-shot examples.
@@ -264,8 +341,10 @@ export abstract class Adapter {
    */
   format_demos<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
     signature: Signature<I, O>,
-    demos: any[]
+    demos: any[],
+    context: Record<string, { type: z.ZodType; value: any }>
   ): { role: "user" | "assistant"; content: string }[] {
+    // NOTE: aligned with dspy [x]
     const complete_demos = [];
     const incomplete_demos = [];
 
@@ -296,7 +375,7 @@ export abstract class Adapter {
     for (const demo of incomplete_demos) {
       messages.push({
         role: "user",
-        content: this.format_user_message_content(signature, demo, {
+        content: this.format_user_message_content(signature, demo, context, {
           prefix: incomplete_demo_prefix,
         }),
       });
@@ -311,7 +390,7 @@ export abstract class Adapter {
     for (const demo of complete_demos) {
       messages.push({
         role: "user",
-        content: this.format_user_message_content(signature, demo),
+        content: this.format_user_message_content(signature, demo, context),
       });
       messages.push({
         role: "assistant",
@@ -332,6 +411,7 @@ export abstract class Adapter {
     I extends z.ZodObject<any>,
     O extends z.ZodObject<any>
   >(signature: Signature<I, O>): string | undefined {
+    // NOTE: aligned with dspy [x]
     for (const [name, field] of Object.entries(signature.input.shape)) {
       if ((field as z.ZodType).meta()?.history === true) {
         return name;
@@ -358,8 +438,9 @@ export abstract class Adapter {
     signature: Signature<I, O>,
     historyFieldName: string,
     inputs: any,
-    context: Record<string, any>
+    context: Record<string, { type: z.ZodType; value: any }>
   ): { role: "user" | "assistant"; content: string }[] {
+    // NOTE: aligned with dspy [x]
     const history = inputs[historyFieldName];
 
     if (!history || !Array.isArray(history)) {
@@ -371,11 +452,11 @@ export abstract class Adapter {
     for (const msg of history) {
       messages.push({
         role: "user",
-        content: this.format_user_message_content(signature, msg),
+        content: this.format_user_message_content(signature, msg, context),
       });
       messages.push({
         role: "assistant",
-        content: this.format_assistant_message_content(signature, msg),
+        content: this.format_assistant_message_content(signature, msg, context),
       });
     }
 
@@ -393,8 +474,12 @@ export abstract class Adapter {
    * @param completion - The LM output to be parsed.
    * @returns A dictionary of the output fields.
    */
-  abstract parse<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
+  parse<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
     signature: Signature<I, O>,
-    completion: string
-  ): z.infer<O>;
+    completion: string,
+    allow_partial_output: boolean = false
+  ): z.infer<O> {
+    // NOTE: Must be implemented by the subclass
+    throw new Error("Not implemented");
+  }
 }

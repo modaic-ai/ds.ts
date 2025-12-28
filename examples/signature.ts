@@ -1,9 +1,5 @@
 import { z } from "zod";
-import {
-  Signature,
-  type InferSignatureInput,
-  type InferSignatureOutput,
-} from "../index";
+import { Signature, type InferInput, type InferOutput } from "../src/index";
 
 /**
  * 1. Object-based definition with Zod schemas
@@ -24,8 +20,8 @@ type MyInput = typeof MySignature.InferInput;
 type MyOutput = typeof MySignature.InferOutput;
 
 // You can still use the older helper types as well:
-// type MyInput = InferSignatureInput<typeof MySignature>;
-// type MyOutput = InferSignatureOutput<typeof MySignature>;
+// type MyInput = InferInput<typeof MySignature>;
+// type MyOutput = InferOutput<typeof MySignature>;
 
 /**
  * 2. Another example with Zod schemas
@@ -66,7 +62,7 @@ export const InlineSignature = Signature.parse(
 class MyClass<S extends Signature<any, any>> {
   constructor(public signature: S) {}
 
-  async run(input: InferSignatureInput<S>): Promise<InferSignatureOutput<S>> {
+  async run(input: InferInput<S>): Promise<InferOutput<S>> {
     console.log(`\n--- Running Signature ---`);
     if (this.signature.instructions) {
       console.log(`Instructions: "${this.signature.instructions}"`);

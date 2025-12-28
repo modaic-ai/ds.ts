@@ -1,14 +1,21 @@
 import { z } from "zod";
-import { Output } from "ai";
-import { ChatAdapter } from "./chat_adapter";
+import {
+  Output,
+  type StreamTextResult,
+  type ToolSet,
+  type GenerateTextResult,
+} from "ai";
+import { ChatAdapter, sameKeys } from "./chat_adapter";
 import type { Signature } from "../signatures/signature";
 import { LM } from "../clients/lm";
 import {
   getFields,
-  formatFieldValue,
-  getFieldDescriptionString,
-  getAnnotationName,
+  format_field_value,
+  get_field_description_string,
+  get_annotation_name,
+  parseValue,
 } from "./utils";
+import { AdapterParseError } from "../exceptions";
 
 /**
  * JSONAdapter is an adapter that uses the AI SDK's structured output
@@ -24,26 +31,33 @@ export class JSONAdapter extends ChatAdapter {
    * in Output.object for the AI SDK.
    */
   private getOutputSpec(output: z.ZodObject<any>): any {
-    return Output.object({ schema: output });
+    const spec = Output.object({ schema: output }) as any;
+    spec.schema = output;
+    return spec;
   }
 
-  override async run<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
+  override async run<
+    I extends z.ZodObject<any>,
+    O extends z.ZodObject<any>,
+    T extends ToolSet
+  >(
     lm: LM,
     lm_kwargs: any,
-    signature: Signature<I, O>,
+    signature: Signature<I, O, T>,
     demos: any[],
     inputs: z.infer<I>
-  ): Promise<z.infer<O>> {
+  ): Promise<GenerateTextResult<T, Output.Output<z.infer<O>>>> {
     const output = this.getOutputSpec(signature.output);
     const messages = this.format(signature, demos, inputs);
 
     const result = (await lm.generateText({
       messages,
       output,
+      tools: signature.tools,
       ...lm_kwargs,
     })) as any;
 
-    return result.object as z.infer<O>;
+    return result;
   }
 
   override async stream<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
@@ -52,13 +66,14 @@ export class JSONAdapter extends ChatAdapter {
     signature: Signature<I, O>,
     demos: any[],
     inputs: z.infer<I>
-  ): Promise<any> {
+  ): Promise<StreamTextResult<any, any>> {
     const output = this.getOutputSpec(signature.output);
     const messages = this.format(signature, demos, inputs);
 
     return await lm.streamText({
       messages,
       output,
+      tools: signature.tools,
       ...lm_kwargs,
     });
   }
@@ -79,7 +94,7 @@ export class JSONAdapter extends ChatAdapter {
     ) => {
       const fieldTypes: Record<string, string> = {};
       for (const [name, field] of Object.entries(fields)) {
-        fieldTypes[name] = getAnnotationName(field as z.ZodType);
+        fieldTypes[name] = get_annotation_name(field as z.ZodType);
       }
       return this.format_field_with_value(fields, fieldTypes, role);
     };
@@ -99,7 +114,7 @@ export class JSONAdapter extends ChatAdapter {
     const outputFields = getFields(signature.output);
 
     const typeInfo = (field: any) => {
-      const name = getAnnotationName(field);
+      const name = get_annotation_name(field);
       return name !== "string"
         ? ` (must be formatted as a valid Python ${name})`
         : "";
@@ -126,13 +141,6 @@ export class JSONAdapter extends ChatAdapter {
     );
   }
 
-  override parse<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
-    _signature: Signature<I, O>,
-    _completion: string
-  ): z.infer<O> {
-    throw new Error("Not implemented");
-  }
-
   override format_field_with_value(
     fields: z.ZodRawShape,
     values?: Record<string, any>,
@@ -140,9 +148,12 @@ export class JSONAdapter extends ChatAdapter {
   ): string {
     if (role === "user") {
       return Object.entries(fields)
-        .map(([name]) => {
+        .map(([name, type]) => {
           const value = values ? values[name] : `[ ${name} ]`;
-          return `[[ ## ${name} ## ]]\n${formatFieldValue(value)}`;
+          return `[[ ## ${name} ## ]]\n${format_field_value(
+            type as z.ZodType,
+            value
+          )}`;
         })
         .join("\n\n");
     } else {
@@ -154,15 +165,36 @@ export class JSONAdapter extends ChatAdapter {
     }
   }
 
-  override format_finetune_data<
-    I extends z.ZodObject<any>,
-    O extends z.ZodObject<any>
-  >(
-    _signature: Signature<I, O>,
-    _demos: any[],
-    _inputs: z.infer<I>,
-    _outputs: z.infer<O>
-  ): { messages: { role: string; content: string }[] } {
-    throw new Error("Not implemented");
+  override parse<I extends z.ZodObject<any>, O extends z.ZodObject<any>>(
+    signature: Signature<I, O>,
+    completion: string,
+    allow_partial_output: boolean = false
+  ): z.infer<O> {
+    try {
+      const data = JSON.parse(completion);
+      const result: Record<string, any> = {};
+      for (const [name, type] of Object.entries(signature.output_fields)) {
+        if (name in data) {
+          result[name] = parseValue(type as z.ZodType, data[name]);
+        }
+      }
+
+      if (!sameKeys(signature.output_fields, result) && !allow_partial_output) {
+        throw new AdapterParseError(
+          "JSONAdapter",
+          signature,
+          completion,
+          `Expected output fields: ${Object.keys(signature.output_fields).join(
+            ", "
+          )}`,
+          result
+        );
+      }
+      return result as z.infer<O>;
+    } catch (e) {
+      if (e instanceof AdapterParseError) throw e;
+      // Fallback to ChatAdapter's marker-based parsing if JSON parsing fails
+      return super.parse(signature, completion, allow_partial_output);
+    }
   }
 }

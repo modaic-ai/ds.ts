@@ -1,4 +1,11 @@
-import { generateText, streamText, type LanguageModel } from "ai";
+import {
+  generateText,
+  streamText,
+  type LanguageModel,
+  type GenerateTextResult,
+  type StreamTextResult,
+  type ToolSet,
+} from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 
 /**
@@ -26,29 +33,29 @@ export class LM {
    * Generates text using the language model.
    * Supports structured output via the `output` parameter.
    */
-  async generateText(
+  async generateText<T extends ToolSet>(
     options: Omit<
       Parameters<typeof generateText>[0],
       "model" | "providerOptions"
     >
-  ) {
-    return await generateText({
+  ): Promise<GenerateTextResult<T, any>> {
+    return (await generateText({
       model: this.model,
       providerOptions: this.providerOptions,
       ...options,
-    } as any);
+    } as any)) as any;
   }
 
   /**
    * Streams text using the language model.
    */
-  async streamText(
+  async streamText<T extends ToolSet>(
     options: Omit<Parameters<typeof streamText>[0], "model" | "providerOptions">
-  ) {
-    return await streamText({
+  ): Promise<StreamTextResult<T, any>> {
+    return (await streamText({
       model: this.model,
       providerOptions: this.providerOptions,
       ...options,
-    } as any);
+    } as any)) as any;
   }
 }
