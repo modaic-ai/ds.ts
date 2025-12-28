@@ -1,6 +1,16 @@
-# Declarative Self-Improving TypeScript
+<p align="center">
+  <img src="https://raw.githubusercontent.com/modaic-ai/ds.ts/refs/heads/main/assets/DSTs-logo.png" alt="DS.TS Logo" width="500">
+</p>
 
-A DSPy mirror in TypeScript. Powered by [Vercel AI SDK](https://ai-sdk.dev).
+<h1 align="center">DSTs: Declarative Self-Improving TypeScript</h1>
+
+<p align="center">
+  <em>A DSPy mirror in TypeScript. Powered by [Vercel AI SDK](https://ai-sdk.dev).</em>
+</p>
+
+[![npm version](https://img.shields.io/npm/v/@modaic/dsts.svg)](https://www.npmjs.com/package/@modaic/dsts)
+
+## Overview
 
 Supported DSPy Primitives:
 
