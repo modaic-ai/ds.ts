@@ -36,12 +36,12 @@ bun add @modaic/dsts
 ## Quickstart
 
 ```typescript
-import { Signature, Module, Predict, configure } from "ds.ts";
+import { Signature, Module, Predict, configure, LM } from "ds.ts";
 import { openai } from "@ai-sdk/openai";
 
 // 1. Setup the Language Model
 configure({
-  lm: openai("gpt-4o"),
+  lm: new LM(openai("gpt-4o")),
 });
 
 // 2. Define a Module
@@ -71,10 +71,12 @@ Signatures define the input and output schema for your predictors. You can defin
 const MySignature = new Signature({
   instructions: "Summarize the text.",
   input: z.object({
-    text: z.string(),
+    text: z.string().describe("The text to summarize"),
   }),
   output: z.object({
-    summary: z.string(),
+    summary: z
+      .string()
+      .describe("The summary of the text (less than 200 words)"),
   }),
 });
 ```
@@ -87,6 +89,93 @@ const predict = Predict("question -> answer");
 const predict = Predict(
   Signature.parse("question -> answer", "Answer the question.")
 );
+```
+
+### Images
+
+Support for images is provided via the [AI SDK Images](https://ai-sdk.dev/docs/foundations/prompts#image-parts) interface.
+
+```typescript
+import { Image } from "@ai-sdk/openai";
+const SigWithImage = new Signature({
+  instructions: "Describe the image.",
+  input: z.object({
+    image: Image(),
+  }),
+  output: z.object({
+    description: z.string().describe("The description of the image"),
+  }),
+});
+
+const predict = new Predict(SigWithImage);
+/// Pass in image as any supported data type from the AI SDK
+// Base64
+const response = await predict.run({ image: "data:image/png;base64,..." });
+// Binary
+const response = await predict.run({ image: fs.readFileSync("image.png") });
+// URL
+const response = await predict.run({ image: "https://example.com/image.png" });
+```
+
+### Files
+
+Support for files is provided via the [AI SDK Files](https://ai-sdk.dev/docs/foundations/prompts#file-parts) interface.
+
+```typescript
+// See: https://ai-sdk.dev/docs/foundations/prompts#file-parts
+// Example Signature accepting a file (user must provide 'mediaType')
+
+const SigWithFile = new Signature({
+  instructions: "Describe the uploaded file. You will receive it as a buffer.",
+  input: z.object({
+    file: File(),
+  }),
+  output: z.object({
+    description: z.string().describe("A description of the provided file."),
+  }),
+});
+
+// Example usage (PDF from Buffer, see ai-sdk docs for more!):
+import { Predict } from "ds.ts";
+import fs from "fs";
+const predict = new Predict(SigWithFile);
+
+const response = await predict.run({
+  file: {
+    mediaType: "application/pdf",
+    data: fs.readFileSync("./data/example.pdf"),
+  },
+});
+console.log(response.description);
+
+// More options (audio, image, URL):
+
+// File by URL:
+const imageResponse = await predict.run({
+  file: {
+    mediaType: "application/pdf",
+    data: "https://example.com/example.pdf",
+  },
+});
+```
+
+### Audio
+
+```typescript
+const SigWithAudio = new Signature({
+  instructions: "Describe the audio.",
+  input: z.object({
+    audio: Audio(),
+  }),
+  output: z.object({
+    description: z.string().describe("The description of the audio"),
+  }),
+});
+const audioResponse = await predict.run({
+  file: {
+    data: fs.readFileSync("./data/galileo.mp3"),
+  },
+});
 ```
 
 ## Tools
@@ -116,10 +205,10 @@ const calculateStairsTool = {
 const StairSignature = new Signature({
   instructions: "Design a staircase based on the height.",
   input: z.object({
-    height_inches: z.number(),
+    height_inches: z.number().describe("The total vertical rise in inches"),
   }),
   output: z.object({
-    building_plan: z.string(),
+    building_plan: z.string().describe("The building plan for the staircase"),
   }),
   tools: { calculateStairsTool },
 });
