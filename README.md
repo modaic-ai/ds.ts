@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/modaic-ai/ds.ts/refs/heads/main/assets/DSTs-logo.png" alt="DS.TS Logo" width="500">
+  <img src="https://raw.githubusercontent.com/modaic-ai/ds.ts/refs/heads/main/assets/DSTs-logo2.png" alt="DS.TS Logo" width="500">
 </p>
 
 <h1 align="center">DSTs: Declarative Self-Improving TypeScript</h1>
