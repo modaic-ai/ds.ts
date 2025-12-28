@@ -5,12 +5,14 @@
 <h1 align="center">DSTs: Declarative Self-Improving TypeScript</h1>
 
 <p align="center">
-  <em>A DSPy mirror in TypeScript. Powered by [Vercel AI SDK](https://ai-sdk.dev).</em>
+  <em>A DSPy mirror in TypeScript. Powered by Vercel AI SDK.</em>
 </p>
 
 [![npm version](https://img.shields.io/npm/v/@modaic/dsts.svg)](https://www.npmjs.com/package/@modaic/dsts)
 
 ## Overview
+
+DSTs implements the DSPy API as a layer over Vercel's [AI SDK](https://ai-sdk.dev), enabling you to use DSPy primitives and optimizers with the AI SDK's extensive infrastructure. Note: some DSPy primitives are still under active development.
 
 Supported DSPy Primitives:
 
@@ -28,6 +30,7 @@ Supported DSPy Primitives:
 - [x] Prediction
 - [x] Tools - via [AI SDK Tools](https://ai-sdk.dev/docs/foundations/tools)
 - [ ] Streaming
+- [ ] Optimizers
 
 ## Installation
 
