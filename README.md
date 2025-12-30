@@ -12,7 +12,7 @@
 
 ## Overview
 
-DSTs implements the DSPy API as a layer over Vercel's [AI SDK](https://ai-sdk.dev), enabling you to use DSPy primitives and optimizers with the AI SDK's extensive infrastructure. Note: some DSPy primitives are still under active development.
+DSTs implements the [DSPy API](https://github.com/stanfordnlp/dspy) as a layer over Vercel's [AI SDK](https://ai-sdk.dev), enabling you to use DSPy primitives and optimizers with the AI SDK's extensive infrastructure. Note: some DSPy primitives are still under active development.
 
 Supported DSPy Primitives:
 
@@ -31,6 +31,101 @@ Supported DSPy Primitives:
 - [x] Tools - via [AI SDK Tools](https://ai-sdk.dev/docs/foundations/tools)
 - [ ] Streaming
 - [ ] Optimizers
+
+### Why another DSPy TS port?
+
+#### Type Safe Signatures with Zod
+
+```typescript
+const MySignature = new Signature({
+  instructions: "Summarize the text.",
+  input: z.object({
+    text: z.string().describe("The text to summarize"),
+  }),
+  output: z.object({
+    summary: z
+      .string()
+      .describe("The summary of the text (less than 200 words)"),
+  }),
+});
+```
+
+#### Clean subset of DSPy API (similar to [DSRs](https://github.com/krypticmouse/DSRs) and [dspy.rb](https://github.com/vicentereig/dspy.rb/tree/v0.33.0))
+
+If you're familiar with DSPy, you already know how to use DSTs. It brings the power of DSPy's Modules and Adapters to the TypeScript ecosystem for the first time.
+
+#### Seamless AI SDK Interoperability
+
+Uses standard AI SDK input and output types, allowing for effortless integration with your existing AI SDK projects and workflows.
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+const LM = new LM(openai("gpt-4o")); // use any AI SDK provider you want
+
+const MySignature = new Signature({
+  instructions: "Summarize the text.",
+  input: z.object({
+    text: z.string().describe("The text to summarize"),
+  }),
+  output: z.object({
+    summary: z
+      .string()
+      .describe("The summary of the text (less than 200 words)"),
+  }),
+  tools: {
+    web_search: searchTool, // use AI SDK Tools
+  },
+});
+
+const predict = new Predict(MySignature);
+const response = await predict.run({
+  text: "The quick brown fox jumps over the lazy dog.",
+});
+const result = response._result; // get the raw AI SDK result
+```
+
+#### Load compiled DSPy programs into DSTs (and vice versa)
+
+DSTs uses the same IR to dump and load DS programs via `save`/`dump_state` and `load`/`load_state`.
+
+> Note: Only saves the prompts. Not the LM.
+
+```typescript
+myModule.save("myModule.json");
+```
+
+```json
+// myModule.json
+{
+  "generate_cypher.predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Task: Generate a Cypher statement ...",
+      "fields": [
+        {
+          "prefix": "Question:",
+          "description": "Question to model using a cypher statement."
+        },
+        {
+          "prefix": "Neo 4 J Schema:",
+          "description": "Current graph schema in Neo4j as a list of NODES and RELATIONSHIPS."
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Statement:",
+          "description": "Cypher statement to query the graph database."
+        }
+      ]
+    },
+    "lm": null
+  }
+}
+```
 
 ## Installation
 
